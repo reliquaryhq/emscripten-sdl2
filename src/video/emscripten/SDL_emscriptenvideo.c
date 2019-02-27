@@ -361,13 +361,27 @@ Emscripten_SetWindowFullscreen(_THIS, SDL_Window * window, SDL_VideoDisplay * di
 }
 
 static void
-Emscripten_SetWindowTitle(_THIS, SDL_Window * window) {
+Emscripten_SetWindowTitleWorker(char *title)
+{
     EM_ASM_INT({
       if (typeof Module['setWindowTitle'] !== 'undefined') {
         Module['setWindowTitle'](UTF8ToString($0));
       }
       return 0;
-    }, window->title);
+    }, title);
+}
+
+static void
+Emscripten_SetWindowTitle(_THIS, SDL_Window * window) {
+    if (emscripten_is_main_runtime_thread()) {
+        Emscripten_SetWindowTitleWorker(window->title);
+    } else {
+        emscripten_sync_run_in_main_runtime_thread(
+            EM_FUNC_SIG_VI,
+            Emscripten_SetWindowTitleWorker,
+            (uint32_t)window->title
+        );
+    }
 }
 
 #endif /* SDL_VIDEO_DRIVER_EMSCRIPTEN */
