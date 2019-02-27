@@ -36,6 +36,7 @@
 #include "SDL_emscriptenevents.h"
 #include "SDL_emscriptenmouse.h"
 
+#include <emscripten/threading.h>
 #define EMSCRIPTENVID_DRIVER_NAME "emscripten"
 
 /* Initialization/Query functions */
@@ -134,6 +135,18 @@ VideoBootStrap Emscripten_bootstrap = {
 };
 
 
+static void
+Emscripten_SetScreenDimensions(SDL_DisplayMode *mode)
+{
+    mode->w = EM_ASM_INT_V({
+        return screen.width;
+    });
+
+    mode->h = EM_ASM_INT_V({
+        return screen.height;
+    });
+}
+
 int
 Emscripten_VideoInit(_THIS)
 {
@@ -142,13 +155,15 @@ Emscripten_VideoInit(_THIS)
     /* Use a fake 32-bpp desktop mode */
     mode.format = SDL_PIXELFORMAT_RGB888;
 
-    mode.w = EM_ASM_INT_V({
-        return screen.width;
-    });
-
-    mode.h = EM_ASM_INT_V({
-        return screen.height;
-    });
+    if (emscripten_is_main_runtime_thread()) {
+        Emscripten_SetScreenDimensions(&mode);
+    } else {
+        emscripten_sync_run_in_main_runtime_thread(
+            EM_FUNC_SIG_VI,
+            Emscripten_SetScreenDimensions,
+            (uint32_t)&mode
+        );
+    }
 
     mode.refresh_rate = 0;
     mode.driverdata = NULL;
