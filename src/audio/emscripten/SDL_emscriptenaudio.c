@@ -29,9 +29,10 @@
 #include "SDL_assert.h"
 
 #include <emscripten/emscripten.h>
+#include <emscripten/threading.h>
 
 static void
-FeedAudioDevice(_THIS, const void *buf, const int buflen)
+FeedAudioDeviceMain(_THIS, const void *buf, const int buflen)
 {
     const int framelen = (SDL_AUDIO_BITSIZE(this->spec.format) / 8) * this->spec.channels;
     EM_ASM_ARGS({
@@ -48,6 +49,23 @@ FeedAudioDevice(_THIS, const void *buf, const int buflen)
             }
         }
     }, buf, buflen / framelen);
+}
+
+static void
+FeedAudioDevice(_THIS, const void *buf, const int buflen)
+{
+    if (emscripten_is_main_runtime_thread()) {
+        FeedAudioDeviceMain(this, buf, buflen);
+        return;
+    }
+
+    emscripten_sync_run_in_main_runtime_thread(
+        EM_FUNC_SIG_VIII,
+        FeedAudioDeviceMain,
+        (uint32_t)this,
+        (uint32_t)buf,
+        buflen
+    );
 }
 
 static void
@@ -89,7 +107,7 @@ HandleAudioProcess(_THIS)
 }
 
 static void
-HandleCaptureProcess(_THIS)
+HandleCaptureProcessMain(_THIS)
 {
     SDL_AudioCallback callback = this->callbackspec.callback;
     const int stream_len = this->callbackspec.size;
@@ -142,9 +160,23 @@ HandleCaptureProcess(_THIS)
     }
 }
 
+static void
+HandleCaptureProcess(_THIS)
+{
+    if (emscripten_is_main_runtime_thread()) {
+        HandleCaptureProcessMain(this);
+        return;
+    }
+
+    emscripten_sync_run_in_main_runtime_thread(
+        EM_FUNC_SIG_VI,
+        HandleCaptureProcessMain,
+        (uint32_t)this
+    );
+}
 
 static void
-EMSCRIPTENAUDIO_CloseDevice(_THIS)
+EMSCRIPTENAUDIO_CloseDeviceMain(_THIS)
 {
     EM_ASM_({
         var SDL2 = Module['SDL2'];
@@ -190,8 +222,23 @@ EMSCRIPTENAUDIO_CloseDevice(_THIS)
 #endif
 }
 
+static void
+EMSCRIPTENAUDIO_CloseDevice(_THIS)
+{
+    if (emscripten_is_main_runtime_thread()) {
+        EMSCRIPTENAUDIO_CloseDeviceMain(this);
+        return;
+    }
+
+    emscripten_sync_run_in_main_runtime_thread(
+        EM_FUNC_SIG_VI,
+        EMSCRIPTENAUDIO_CloseDeviceMain,
+        (uint32_t)this
+    );
+}
+
 static int
-EMSCRIPTENAUDIO_OpenDevice(_THIS, void *handle, const char *devname, int iscapture)
+EMSCRIPTENAUDIO_OpenDeviceMain(_THIS, void *handle, const char *devname, int iscapture)
 {
     SDL_bool valid_format = SDL_FALSE;
     SDL_AudioFormat test_format;
@@ -336,7 +383,24 @@ EMSCRIPTENAUDIO_OpenDevice(_THIS, void *handle, const char *devname, int iscaptu
 }
 
 static int
-EMSCRIPTENAUDIO_Init(SDL_AudioDriverImpl * impl)
+EMSCRIPTENAUDIO_OpenDevice(_THIS, void *handle, const char *devname, int iscapture)
+{
+    if (emscripten_is_main_runtime_thread()) {
+        return EMSCRIPTENAUDIO_OpenDeviceMain(this, handle, devname, iscapture);
+    }
+
+    return emscripten_sync_run_in_main_runtime_thread(
+        EM_FUNC_SIG_IIIII,
+        EMSCRIPTENAUDIO_OpenDeviceMain,
+        (uint32_t)this,
+        (uint32_t)handle,
+        (uint32_t)devname,
+        iscapture
+    );
+}
+
+static int
+EMSCRIPTENAUDIO_InitMain(SDL_AudioDriverImpl * impl)
 {
     int available;
     int capture_available;
@@ -378,6 +442,20 @@ EMSCRIPTENAUDIO_Init(SDL_AudioDriverImpl * impl)
     impl->OnlyHasDefaultCaptureDevice = capture_available ? SDL_TRUE : SDL_FALSE;
 
     return available;
+}
+
+static int
+EMSCRIPTENAUDIO_Init(SDL_AudioDriverImpl * impl)
+{
+    if (emscripten_is_main_runtime_thread()) {
+        return EMSCRIPTENAUDIO_InitMain(impl);
+    }
+
+    return emscripten_sync_run_in_main_runtime_thread(
+        EM_FUNC_SIG_II,
+        EMSCRIPTENAUDIO_InitMain,
+        (uint32_t)impl
+    );
 }
 
 AudioBootStrap EMSCRIPTENAUDIO_bootstrap = {
